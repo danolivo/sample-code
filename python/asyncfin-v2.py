@@ -57,7 +57,7 @@ class Client(object):
         evloop_process = multiprocessing.Process(target=self.run, args=())
         evloop_process.start()
         time.sleep(4)
-        self.parent_pipe.send('exit')
+        self.parent_pipe.send("exit")
         evloop_process.join()
 
 client = Client();
