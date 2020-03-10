@@ -1,0 +1,17 @@
+#!/bin/bash
+
+INSTDIR=`pwd`/tmp_install
+export LD_LIBRARY_PATH=$INSTDIR/lib:$LD_LIBRARY_PATH
+export PATH=$INSTDIR/bin:$PATH
+export PGPORT=$1
+
+M=`pwd`/PGDATA
+rm -rf $M || true
+mkdir $M
+rm -rf logfile.log || true
+
+#mk
+initdb -D $M
+echo "wal_level = logical" >> $M/postgresql.conf
+pg_ctl -D $M -l logfile.log start
+
