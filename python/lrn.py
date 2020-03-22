@@ -10,13 +10,13 @@ import psycopg2
 import subprocess
 import sys
 
-sqlpath = "/home/andrey/PostgresPro/JOB/smalljoins/"
+sqlpath = "/home/andrey/PostgresPro/JOB/JOB_Queries/"
 
 # Convergence issues
 TestsMaxNum = 100
-TestMinExecutions = 7
+TestMinExecutions = 3 # Minimum learning iterations
 ConvergenceError = 0.1
-WarmingNoAQOIters = 3
+WarmingNoAQOIters = 4
 
 # Set environment variables
 PWD = os.environ["PWD"]
@@ -47,8 +47,9 @@ cur.execute("CREATE EXTENSION IF NOT EXISTS AQO;")
 old_isolation_level = con.isolation_level
 con.set_isolation_level(0)
 cur.execute("ALTER SYSTEM SET aqo.mode = 'learn';")
-cur.execute("ALTER SYSTEM SET aqo.use_common_space = 'true';")
-cur.execute("ALTER SYSTEM SET aqo.sel_trust_factor = 0.0001;")
+cur.execute("ALTER SYSTEM SET aqo.use_common_space = 'false';")
+cur.execute("ALTER SYSTEM SET aqo.use_assumptions = 'true';")
+cur.execute("ALTER SYSTEM SET aqo.sel_trust_factor = 1;")
 cur.execute("ALTER SYSTEM SET aqo.force_collect_stat = 'false';")
 con.set_isolation_level(old_isolation_level)
 con.commit()
@@ -67,11 +68,12 @@ if len(sys.argv) > 1:
 for filename in onlyfiles:
 
     f = open(sqlpath + filename, "r")
+    print("Use file", sqlpath + filename)
     query = f.read()
     query = "EXPLAIN (ANALYZE ON, VERBOSE ON, FORMAT JSON) " + query
     f.close()
 
-    # Do a shot in disabled mode
+    # Do warm shots in disabled mode
     cur = con.cursor()
     cur.execute("SET aqo.mode = 'disabled';")
     cur.execute("SET aqo.force_collect_stat = 'true';")
@@ -80,6 +82,7 @@ for filename in onlyfiles:
     times = [] # Execution time list without aqo
     for i in range(WarmingNoAQOIters):
         cur.execute(query)
+
         result = cur.fetchone()[0][0]
         times.append(float(result["Execution Time"]))
 
@@ -93,11 +96,13 @@ for filename in onlyfiles:
     use_aqo = bool(result["Using aqo"])
     assert use_aqo == False
     etimeNoAQO = float(result["Execution Time"])
+    ptimeNoAQO = float(result["Planning Time"])
+
     cur.execute("SELECT public.aqo_enable_query(" + str(qhash) + ");")
     cur.close()
     con.close() # To clean GUC's
-    print("Test case:", filename, ", NJ: ", njoins, ", Hash: ", qhash, "Base time: ", etimeNoAQO)
-    print("{0:3s}\t{1:7.7s}\t{2:7s}\t{3:3s}\t{4:3s}".format("No.", "Time", "Err", "AQO", "Na"))
+    print("Test case:", filename, ", NJ: ", njoins, ", Hash: ", qhash, "Base time: ", etimeNoAQO, "Planning time:", ptimeNoAQO)
+    print("{0:3s}\t{1:7.7s}\t{2:7s}\t{3:3s}\t{4:3s}\t{5:7.7s}".format("No.", "Time", "Err", "AQO", "Na", "PTime"))
 
     # --------------------------------------------------------------------------
     # Do the test
@@ -108,17 +113,19 @@ for filename in onlyfiles:
     errors = []
     MinExecTime = -1.
     etime = -1.
+    ptime = -1.
     LastError = -1.
     for i in range(TestsMaxNum):
         cur = con.cursor()
         cur.execute(query)
-        result = cur.fetchone()[0][0]
 
+        result = cur.fetchone()[0][0]
         aqo_mode = result["AQO mode"]
         assert aqo_mode == "LEARN"
         use_aqo = bool(result["Using aqo"])
         etime = float(result["Execution Time"])
-        na = int(result["nassumptions"])
+        ptime = float(result["Planning Time"])
+        na = int(result["Assumptions used"])
 
         if MinExecTime < 0 or MinExecTime > etime:
             MinExecTime = etime
@@ -127,7 +134,7 @@ for filename in onlyfiles:
         err = float(cur.fetchone()[0])
         cur.close()
         counter += 1
-        print("{0:3d}\t{1:7.0f}\t{2:7.1E}\t{3:3d}\t{4:3d}".format(counter, etime, err, use_aqo, na))
+        print("{0:3d}\t{1:7.0f}\t{2:7.1E}\t{3:3d}\t{4:3d}\t{5:7.0f}".format(counter, etime, err, use_aqo, na, ptime))
         sys.stdout.flush()
 
         if err < 0.:
@@ -135,7 +142,8 @@ for filename in onlyfiles:
             break
 
         errors.append(err)
-        if i < TestMinExecutions:
+        # Hard condition for the going to next iteration
+        if i < TestMinExecutions or na > 0:
             continue
 
         ConvergenceAchieved = True
@@ -150,14 +158,15 @@ for filename in onlyfiles:
     if len(errors) > 0:
         LastError = errors[-1]
 
+    # Do last shot with AQO in frozen mode.
     cur = con.cursor()
     cur.execute("SET aqo.mode = 'frozen';")
     cur.execute("SET aqo.sel_trust_factor = 1;")
     cur.execute(query)
+
     result = cur.fetchone()[0][0]
     aqo_mode = str(result["AQO mode"])
     FrozenTime = float(result["Execution Time"])
-
     cur.close()
     print("Test {0} finished. Last error: {1:7.1E}, Last time: {2} \
         MinTime: {3} Base time: {4}. In {5} mode time is {6}"
