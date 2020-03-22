@@ -49,7 +49,7 @@ con.set_isolation_level(0)
 cur.execute("ALTER SYSTEM SET aqo.mode = 'learn';")
 cur.execute("ALTER SYSTEM SET aqo.use_common_space = 'false';")
 cur.execute("ALTER SYSTEM SET aqo.use_assumptions = 'true';")
-cur.execute("ALTER SYSTEM SET aqo.sel_trust_factor = 1;")
+cur.execute("ALTER SYSTEM SET aqo.sel_trust_factor = 0.0001;")
 cur.execute("ALTER SYSTEM SET aqo.force_collect_stat = 'false';")
 con.set_isolation_level(old_isolation_level)
 con.commit()
@@ -117,7 +117,13 @@ for filename in onlyfiles:
     LastError = -1.
     for i in range(TestsMaxNum):
         cur = con.cursor()
-        cur.execute(query)
+        try:
+            cur.execute(query)
+        except psycopg2.errors.DiskFull as err:
+            print("Disk full: {0}".format(err))
+            continue;
+        except:
+            print("Unexpected error:", sys.exc_info()[0])
 
         result = cur.fetchone()[0][0]
         aqo_mode = result["AQO mode"]
