@@ -1,0 +1,30 @@
+\set aid random(1, 1e6)
+\set dest_aid random(1, 1e6)
+\set delta random(1, 100)
+	
+\if random(0, 99) < 5
+	-- Internal exchange
+	BEGIN;
+	UPDATE accounts SET
+		value = value - :delta,
+		itransfer = itransfer + :delta,
+		nit = nit + 1
+	WHERE aid = :aid;
+	
+	UPDATE accounts SET
+		value = value + :delta,
+		itransfer = itransfer - :delta
+	WHERE aid = :dest_aid;
+	END;
+\else
+	-- External exchange
+	BEGIN;
+	UPDATE accounts SET
+		value = value - :delta,
+		etransfer = etransfer + :delta,
+		net = net + 1
+	WHERE aid = :aid;
+	END;
+\endif
+
+
