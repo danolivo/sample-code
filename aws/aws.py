@@ -20,7 +20,7 @@ NodesNum = 3
 AWSCommandsOutput = " > /dev/null"
 
 class ShardmanInstances(object):
-    def __init__(self, nnodes, instanceType=DefaultInstanceType, imageId="ami-0ce57d68b20afef6c", dropRemote=False):
+    def __init__(self, nnodes, instanceType=DefaultInstanceType, imageId="ami-0ec4e716f9b2db25b", dropRemote=False):
         """ Load shardman instances. Initialization will be finished when all
         nnodes instances will be in 'running' state. If we have stopped instances,
         run needed quantity.
@@ -245,6 +245,31 @@ def parse_command_line():
             AWS_OPERATION = arg
         else:
             assert False, "unhandled option"
+
+additional_gucs = []
+
+# Wait for compute nodes accessibility
+def WaitForConnection(ip):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    print("Connect to IP", ip)
+    while (True):
+        try:
+            client.connect(hostname=ip, username=os.environ["PGDATABASE"], key_filename=os.environ["AWS_KEY_FILE"])
+        except paramiko.ssh_exception.NoValidConnectionsError:
+            print("Try to connect to the server.")
+            time.sleep(1)
+            continue
+        except paramiko.ssh_exception.SSHException:
+            print("Catch SSHException. Try to reconnect to the server.")
+            time.sleep(1)
+            continue
+        except:
+            print("Unexpected error:", sys.exc_info()[0])
+            raise
+        # Exit if connection established
+        break
+    return client
 
 if __name__ == "__main__":
     parse_command_line()

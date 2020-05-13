@@ -4,27 +4,29 @@
 	PostgreSQL cluster test
 """
 
-import aws_provision
+import aws
 import os
 import paramiko
 import psycopg2
 import sys
 import time
 
-clients_num = 200
-heads_num = 20
+clients_num = 200 # total number of pgbench clients
+accounts_num = 1e6
+total_time = 60
+coordinators_num = -1 # -1 - use each instance as a coordinator
 use_private_address = False
 pg_deploy = True
 create_database = False
-key_filename_path = "../.ssh/amazon_lepikhov.pem"
 
 # Set environment
 os.environ["PGDATABASE"] = "ubuntu"
 os.environ["PGPORT"] = "5432"
 os.environ["PGUSER"] = "shardman"
 os.environ["PGPASSWORD"] = "shard12345"
+os.environ["AWS_KEY_FILE"] = os.environ["HOME"] + "/.ssh/amazon_lepikhov.pem"
 
-aws_provision.parse_command_line()
+aws.parse_command_line()
 
 # ##############################################################################
 #
@@ -33,11 +35,16 @@ aws_provision.parse_command_line()
 # ##############################################################################
 
 address = []
-nodes = aws_provision.ShardmanInstances(aws_provision.SHARDMAN_NODES)
+nodes = aws.ShardmanInstances(aws.SHARDMAN_NODES)
 if (use_private_address):
     address = nodes.getPrivateAddress()
 else:
     address = nodes.getPublicAddress()
+# Will use for remote servers creation
+privateIP = nodes.getPrivateAddress()
+
+if (coordinators_num < 0 or coordinators_num > len(address)):
+    coordinators_num = len(address)
 
 # ##############################################################################
 #
@@ -45,35 +52,12 @@ else:
 #
 # ##############################################################################
 
-# Wait for compute nodes accessibility
-def WaitForConnection(ip):
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    print("Connect to IP", ip)
-    while (True):
-        try:
-            client.connect(hostname=ip, username=os.environ["PGDATABASE"], key_filename=key_filename_path)
-        except paramiko.ssh_exception.NoValidConnectionsError:
-            print("Try to connect to the server.")
-            time.sleep(1)
-            continue
-        except paramiko.ssh_exception.SSHException:
-            print("Catch SSHException. Try to reconnect to the server.")
-            time.sleep(1)
-            continue
-        except:
-            print("Unexpected error:", sys.exc_info()[0])
-            raise
-        # Exit if connection established
-        break
-    return client
-
 if (pg_deploy):
     create_database = True
     # Establish ssh connections
     clients = []
     for ip in address:
-        clients.append(WaitForConnection(ip))
+        clients.append(aws.WaitForConnection(ip))
 
     # Launch PG in parallel
     stdouts = []
@@ -132,6 +116,7 @@ if (create_database):
             ) PARTITION BY hash (aid);")
 
     NodesNum = len(curs)
+    debugmsg = 0
     for n in range(NodesNum):
         cur = curs[n]
         remoteNum = 0
@@ -142,9 +127,17 @@ if (create_database):
                     " PARTITION OF accounts FOR VALUES WITH (modulus "+ str(NodesNum) + \
                     ", remainder " + str(i) + ");")
             else:
-                cur.execute("CREATE SERVER IF NOT EXISTS remote" + str(remoteNum) + \
-                	" FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '" + address[i] + \
-                	"', use_remote_estimate 'on');")
+                query = "CREATE SERVER IF NOT EXISTS remote" + str(remoteNum) + \
+                	" FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '" + privateIP[i] + \
+                    "', port '" + os.environ["PGPORT"] + \
+                    "', dbname '" + os.environ["PGDATABASE"] + \
+                	"', use_remote_estimate 'on');"
+
+                if (debugmsg == 0):
+                    debugmsg = 1
+                    print("DEBUG: CREATE SERVER query string sample: ", query)
+
+                cur.execute(query)
                 cur.execute("CREATE USER MAPPING IF NOT EXISTS FOR PUBLIC SERVER remote" + str(remoteNum) + ";")
                 cur.execute("CREATE FOREIGN TABLE accounts_" + str(i) + \
                             " PARTITION OF accounts FOR VALUES WITH (modulus " + str(NodesNum) + \
@@ -153,7 +146,7 @@ if (create_database):
 
     print("Fill the table...")
     curs[0].execute("explain analyze verbose INSERT INTO accounts (name, value, etransfer, itransfer) \
-        SELECT 'Name' || gs.*::text, 1000, 0, 0 FROM generate_series(1, 1e3) AS gs")
+        SELECT 'Name' || gs.*::text, 1000, 0, 0 FROM generate_series(1, " + str(accounts_num) + ") AS gs")
 
     print("Create indexes...")
     for cur in curs:
@@ -165,17 +158,29 @@ if (create_database):
 
 # ##############################################################################
 #
-# Execute pgbench test
+# Execute pgbench test in parallel processes
 #
 # ##############################################################################
 
 pids = []
+debugmsg = 0
+ncoords = 0
 for addr in address:
+    if (ncoords >= coordinators_num):
+        continue
+
     pid = os.fork()
+    ncoords += 1
 
     if (pid == 0):
-        os.system("pgbench -n -P 5 -c " + str(clients_num / heads_num) + " -j " + str(clients_num / heads_num) + " --max-tries 1000 -f test.pgb -T 60 -h " + str(addr))
-        sys.exit(0)
+        cmdline = "pgbench -n -P 5 -c " + str(clients_num / coordinators_num) + \
+            " -j " + str(clients_num / coordinators_num) + \
+            " --max-tries 1000 -f test.pgb -T " + str(total_time) + " -h " + str(addr)
+        if (debugmsg == 0):
+            debugmsg = 1
+            print("DEBUG: pgbench string sample: ", cmdline)
+        os.system(cmdline)
+        os._exit(0)
 
     print("pid: ", pid, ", addr: ", addr)
     pids.append(pid)
@@ -189,16 +194,16 @@ for pid in pids:
 #
 # ##############################################################################
 
-#con = psycopg2.connect(host=address[1])
-#cur = con.cursor()
-#cur.execute("SELECT (itp > 4 AND itp < 6) AS int_transfer_percentage \
-#	FROM (SELECT 100*sum(nit)/sum(net) AS itp FROM accounts) AS pr;")
-#res = cur.fetchall()[0]
-#print(res)
+con = psycopg2.connect(host=address[1])
+cur = con.cursor()
+cur.execute("SELECT (itp > 4 AND itp < 6) AS int_transfer_percentage \
+	FROM (SELECT 100*sum(nit)/sum(net) AS itp FROM accounts) AS pr;")
+res = cur.fetchall()[0]
+print(res)
 # Sum of total current value and external transfers must be equal to <accounts number> * 1000
-#cur.execute("SELECT sum(etransfer)+sum(value)=1000*(SELECT count(*) FROM accounts) AS check_value FROM accounts;")
-#res = cur.fetchall()[0]
-#print(res)
-#cur.close()
-#con.close()
+cur.execute("SELECT sum(etransfer)+sum(value)=1000*(SELECT count(*) FROM accounts) AS check_value FROM accounts;")
+res = cur.fetchall()[0]
+print(res)
+cur.close()
+con.close()
 
