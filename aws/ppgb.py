@@ -16,6 +16,16 @@ clients_num = 200
 coordinators_num = -1 # Use all instances as heads
 use_private_address = False
 
+
+#additional_gucs = ["track_global_snapshots=false", "autoprepare_limit=0", "autoprepare_memory_limit=0", "shared_buffers=1GB"]
+additional_gucs = ["track_global_snapshots=true",
+                    "autoprepare_limit=-1",
+                    "autoprepare_memory_limit=-1",
+                    "shared_buffers=1GB",
+                    "postgres_fdw.use_global_snapshots=true",
+                    "max_prepared_transactions=1000"]
+
+
 # Set environment
 os.environ["PGDATABASE"] = "ubuntu"
 os.environ["PGPORT"] = "5432"
@@ -65,8 +75,6 @@ else:
 # Set additional GUCs
 #
 # ##############################################################################
-
-additional_gucs = ["track_global_snapshots=true", "autoprepare_limit=-1", "autoprepare_memory_limit=-1", "shared_buffers=1GB"]
 
 if (len(additional_gucs) > 0):
     print("SET additional GUC's")

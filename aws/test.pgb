@@ -4,7 +4,7 @@
 	
 \if random(0, 99) < 5
 	-- Internal exchange
-	BEGIN;
+	BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 	UPDATE accounts SET
 		value = value - :delta,
 		itransfer = itransfer + :delta,
@@ -18,7 +18,7 @@
 	END;
 \else
 	-- External exchange
-	BEGIN;
+	BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 	UPDATE accounts SET
 		value = value - :delta,
 		etransfer = etransfer + :delta,

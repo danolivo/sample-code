@@ -15,12 +15,13 @@ import getopt
 # AWS instance type wil be used
 #DefaultInstanceType="c4.2xlarge" # 8 vCPUs, 16 GB RAM
 DefaultInstanceType = "t2.medium" # 2 vCPUs, 4 GB RAM
+DefaultImageId = "ami-0133dd4357d3df288" # ami-0aac6db0b4997125f - before our patches
 #DefaultInstanceType = "t2.micro" # 1 vCPUs, 1 GB RAM
 NodesNum = 3
 AWSCommandsOutput = " > /dev/null"
 
 class ShardmanInstances(object):
-    def __init__(self, nnodes, instanceType=DefaultInstanceType, imageId="ami-0ec4e716f9b2db25b", dropRemote=False):
+    def __init__(self, nnodes, instanceType=DefaultInstanceType, imageId=DefaultImageId, dropRemote=False):
         """ Load shardman instances. Initialization will be finished when all
         nnodes instances will be in 'running' state. If we have stopped instances,
         run needed quantity.
@@ -31,7 +32,13 @@ class ShardmanInstances(object):
         """
         self.instanceType = instanceType
         self.dropRemote = dropRemote
-        self.imageId = imageId
+
+        if (imageId == ""):
+            self.imageId = DefaultImageId
+        else:
+            self.imageId = imageId
+        print("Use image: ", self.imageId)
+        
         self.GetAWSNodesCmdline = "aws ec2 describe-instances --filters 'Name=tag:group,Values=shardman' " + AWSCommandsOutput
         self.nnodes = 0
 
@@ -45,6 +52,13 @@ class ShardmanInstances(object):
             total_stopped_nodes = 0
 
             for I in instancesDesc["Reservations"]:
+                if (I["Instances"][0]["ImageId"] != self.imageId):
+                    if (I["Instances"][0]["State"]["Name"] == "running"):
+                        instanceId = I["Instances"][0]["InstanceId"]
+                        print("Stop instance {0:s} with another AMI {1:s}. Needed AMI: {2:s}".format(instanceId, I["Instances"][0]["ImageId"], self.imageId))
+                        os.system("aws ec2 stop-instances --instance-ids " + instanceId + AWSCommandsOutput)
+                    continue
+
                 if (nnodes == 0):
                     # Calculate number of running nodes and don't execute anyone else.
                     if (I["Instances"][0]["State"]["Name"] == "running"):
@@ -52,7 +66,7 @@ class ShardmanInstances(object):
                     continue
 
                 if (I["Instances"][0]["State"]["Name"] == "running"):
-                    # if number of nodes is mpre than needed, stop redundant
+                    # if number of nodes is more than needed, stop redundant
                     if (self.nnodes == nnodes):
                         instanceId = I["Instances"][0]["InstanceId"]
                         print("Stop excess instance: ", instanceId)
@@ -69,7 +83,7 @@ class ShardmanInstances(object):
                         stopped_nodes += 1
 
             if (nnodes == 0):
-                self.instances = instancesDesc["Reservations"]
+                self.storeInstances(instancesDesc["Reservations"])
                 print("Load {0:d} currently running instances".format(self.nnodes))
                 return
 
@@ -93,8 +107,23 @@ class ShardmanInstances(object):
                 if (state not in cstates):
                     raise Exception("Instance in incorrect state: ", state, "InstanceId: ", I['Instances'][0]['InstanceId'])
 
-        self.instances = instancesDesc["Reservations"]
+        self.storeInstances(instancesDesc["Reservations"])
         print("Shardman provisioning finished. nodes: ", self.nnodes)
+
+    def storeInstances(self, instancesDesc):
+        self.instances = []
+        ImageId = ""
+        for i in instancesDesc:
+            if (i["Instances"][0]["State"]["Name"] != "running"):
+                continue
+
+            # Check shardman image consistency
+            if (ImageId == ""):
+                ImageId = i["Instances"][0]["ImageId"]
+            else:
+                assert ImageId == i["Instances"][0]["ImageId"]
+
+            self.instances.append(i)
 
     def checkTransientNodes(self, instances):
         """ See for AWS instances in transient state. Return number of such instances. """
@@ -143,7 +172,7 @@ class ShardmanInstances(object):
                 count = self.checkTransientNodes(instances)
 
                 if (count == 0):
-                    self.instances = instances
+                    self.storeInstances(instances)
                     break
 
                 print("Wait for {0:d} instance(s) in transient state".format(count))
@@ -169,7 +198,7 @@ class ShardmanInstances(object):
                         pubIP = "-.-.-.-"
                         prvIP = "-.-.-.-"
 
-                    print("Public IP: ", pubIP, "Private IP: ", prvIP, "State: ", i["Instances"][0]["State"]["Name"])
+                    print("Public IP: ", pubIP, "Private IP: ", prvIP, "State: ", i["Instances"][0]["State"]["Name"], ", AMI: ", i["Instances"][0]["ImageId"])
                 except KeyError:
                     print("Instance do not have a key. ", sys.exc_info()[0])
                     raise
@@ -222,11 +251,12 @@ def usage():
 
 SHARDMAN_NODES = 0
 AWS_OPERATION = "show"
+IMAGEID = ""
 
 def parse_command_line():
-    global SHARDMAN_NODES, AWS_OPERATION
+    global SHARDMAN_NODES, AWS_OPERATION, IMAGEID
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hn:c:", ["--command"])
+        opts, args = getopt.getopt(sys.argv[1:], "hn:c:i:", ["--command"])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err))
@@ -243,10 +273,10 @@ def parse_command_line():
         elif opt in ("-c", "--command"):
             # command type
             AWS_OPERATION = arg
+        elif opt == "-i":
+            IMAGEID = str(arg)
         else:
             assert False, "unhandled option"
-
-additional_gucs = []
 
 # Wait for compute nodes accessibility
 def WaitForConnection(ip):
@@ -255,7 +285,7 @@ def WaitForConnection(ip):
     print("Connect to IP", ip)
     while (True):
         try:
-            client.connect(hostname=ip, username=os.environ["PGDATABASE"], key_filename=os.environ["AWS_KEY_FILE"])
+            client.connect(hostname=ip, username=os.environ["SSHUSER"], key_filename=os.environ["AWS_KEY_FILE"])
         except paramiko.ssh_exception.NoValidConnectionsError:
             print("Try to connect to the server.")
             time.sleep(1)
@@ -278,8 +308,8 @@ if __name__ == "__main__":
         print("Use existed shardman instances.")
     else:
         print("Start AWS provisioning of shardman")
-
-    i = ShardmanInstances(SHARDMAN_NODES)
+    
+    i = ShardmanInstances(SHARDMAN_NODES, imageId=IMAGEID)
 
     if (AWS_OPERATION == "show"):
         i.show()

@@ -23,6 +23,7 @@ create_database = False
 os.environ["PGDATABASE"] = "ubuntu"
 os.environ["PGPORT"] = "5432"
 os.environ["PGUSER"] = "shardman"
+os.environ["SSHUSER"] = "ubuntu"
 os.environ["PGPASSWORD"] = "shard12345"
 os.environ["AWS_KEY_FILE"] = os.environ["HOME"] + "/.ssh/amazon_lepikhov.pem"
 
@@ -35,7 +36,8 @@ aws.parse_command_line()
 # ##############################################################################
 
 address = []
-nodes = aws.ShardmanInstances(aws.SHARDMAN_NODES)
+
+nodes = aws.ShardmanInstances(aws.SHARDMAN_NODES, imageId=aws.IMAGEID)
 if (use_private_address):
     address = nodes.getPrivateAddress()
 else:
