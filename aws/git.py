@@ -2,6 +2,7 @@
 
 """
 	GIT operations on shardman instances
+	XXX: Not worked. Problem with git pull - github public key 
 """
 
 import aws
@@ -9,6 +10,7 @@ import getopt
 import os
 import paramiko
 import sys
+from fabric import Connection
 
 COMMIT = "none"
 
@@ -47,18 +49,19 @@ address = nodes.getPublicAddress()
 
 clients = []
 for ip in address:
-    clients.append(aws.WaitForConnection(ip))
+    result = Connection(ip).run('cd pg && git pull', hide=True)
+    msg = "Ran {0.command!r} on {0.connection.host}, got stdout:\n{0.stdout}"
+    print(msg.format(result))
 
 # Launch PG in parallel
 stdouts = []
 for client in clients:
-    stdin, stdout, stderr = client.exec_command('cd pg && \
-        . ../scripts/paths.sh && \
-        git pull && \
-        git checkout ' + COMMIT + ' && \
-        ../scripts/pgc && \
-        ../scripts/mk && \
-        ../scripts/pre')
+    stdin, stdout, stderr = client.exec_command("/bin/bash -ic 'cd pg && git checkout master && git pull'")
+    print(stdout.read(), " | ", stderr.read())
+    cmdline = 'cd pg && . ../scripts/paths.sh && git checkout ' + COMMIT + ' && \
+        ../scripts/pgc && ../scripts/mk && ../scripts/pre'
+    print("cmdline: ", cmdline)
+    stdin, stdout, stderr = client.exec_command(cmdline)
     stdouts.append(stdout)
 
 nclient = 0
@@ -66,7 +69,7 @@ for stdout in stdouts:
     stdout.channel.recv_exit_status()
     nclient += 1
     print("End of wait for client {0:d}/{1:d}".format(nclient, len(clients)))
-    print(stdout.read(), " | ", stderr.read())
+#    print(stdout.read(), " | ", stderr.read())
 
 for client in clients:
     client.close()
