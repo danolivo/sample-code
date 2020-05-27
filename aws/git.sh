@@ -34,6 +34,9 @@ echo "Total number of instances: " $ninstances
 for i in ${ips[@]}; do
     node=$(last -i | head -n 1 | awk "{print $i}")
     echo "PPROCESS NODE " $node
-    ssh -i ~/.ssh/amazon_lepikhov.pem ubuntu@$node "cd pg && git checkout master && git pull && git checkout $1"
-    ssh -i ~/.ssh/amazon_lepikhov.pem ubuntu@$node "export LC_ALL='C' && cd pg && ../scripts/pgc > /dev/null && ../scripts/mk && ../scripts/pre"
+    # Test clock_gettime() problem
+    ssh -i ~/.ssh/amazon_lepikhov.pem ubuntu@$node "./a.out" &
+    ssh -i ~/.ssh/amazon_lepikhov.pem ubuntu@$node "cd pg && git checkout assert1 && git pull && git checkout $1"
+    ssh -i ~/.ssh/amazon_lepikhov.pem ubuntu@$node "export LC_ALL='C' && cd pg && git clean -f -d src contrib doc && make clean && ../scripts/pgc > /dev/null && ../scripts/mk && \
+    . ../scripts/paths.sh && pg_ctl -D PGDATA -l logfile.log restart"
 done
