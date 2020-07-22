@@ -26,4 +26,4 @@ CREATE TABLE d_4_0 PARTITION OF d_4 (time) FOR VALUES FROM ('2020-01-01 00:00:00
 INSERT INTO d (id, time, pld) SELECT gs.* , timestamp '2020-01-01 00:00:00' +
 	random() * (timestamp '2020-01-31 23:59:59' - timestamp '2020-01-01 00:00:00'), 'abc' FROM generate_series(0,10000) AS gs;
 
-CREATE INDEX ON d USING brin (id, time);
+-- CREATE INDEX ON d USING brin (id, time);
