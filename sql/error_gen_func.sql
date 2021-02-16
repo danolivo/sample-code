@@ -1,0 +1,12 @@
+CREATE OR REPLACE FUNCTION error_gen() RETURNS float AS
+$BODY$
+DECLARE
+ i float := random();
+BEGIN
+	IF i < 0.5 THEN
+		raise EXCEPTION 'Error !';
+	END IF;
+	RETURN i;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
