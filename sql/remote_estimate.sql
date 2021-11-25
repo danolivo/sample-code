@@ -1,0 +1,56 @@
+\set VERBOSITY terse
+DROP TABLE IF EXISTS l CASCADE;
+DROP EXTENSION IF EXISTS postgres_fdw CASCADE;
+
+CREATE EXTENSION postgres_fdw;
+CREATE SERVER loopback FOREIGN DATA WRAPPER postgres_fdw;
+CREATE USER MAPPING FOR PUBLIC SERVER loopback;
+
+CREATE SERVER re_lb FOREIGN DATA WRAPPER postgres_fdw OPTIONS (use_remote_estimate 'true');
+CREATE USER MAPPING FOR PUBLIC SERVER re_lb;
+
+CREATE TABLE l AS (SELECT * FROM generate_series(1,5000) AS a);
+CREATE FOREIGN TABLE f(a int) SERVER loopback OPTIONS (table_name 'l');
+CREATE FOREIGN TABLE re_f(a int) SERVER re_lb OPTIONS (table_name 'l');
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM l;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM f;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM re_f;
+
+SELECT reltuples FROM pg_class
+    WHERE relname = 'l' OR relname = 'f' OR relname = 're_f';
+
+ANALYZE;
+
+\echo 'After general analyze'
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM l;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM f;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM re_f;
+
+SELECT reltuples FROM pg_class
+    WHERE relname = 'l' OR relname = 'f' OR relname = 're_f';
+
+ANALYZE f, re_f;
+
+\echo 'After selective analyze'
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM l;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM f;
+
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM re_f;
+
+SELECT reltuples FROM pg_class
+    WHERE relname = 'l' OR relname = 'f' OR relname = 're_f';
